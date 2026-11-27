@@ -2,6 +2,10 @@
 const USE_BACKEND = false;
 const API_URL = "http://127.0.0.1:8000";
 
+// Данные для входа в админку
+const ADMIN_LOGIN = "Admin";
+const ADMIN_PASSWORD = "vhyt57FG";
+
 const EXTRA_BOOKS = [
   // --- КЛАССИЧЕСКИЕ КНИГИ ---
   { id_books: 101, name: "Мастер и Маргарита", aftors: ["Михаил Булгаков"], dgarnu: ["Классика", "Фантастика"], data: "1967", price: 690, color: "#3b82f6", type: "Книга", rating: 4.8, description: "Культовый роман о визите дьявола в Москву 1930-х годов, вечной любви и силе творчества." },
@@ -148,7 +152,6 @@ window.checkAuth = function() {
   }
 };
 
-// Упрощенный вход без сервера
 window.handleRegister = async function(e) {
   e.preventDefault();
   const name = document.getElementById("regName").value.trim();
@@ -188,6 +191,58 @@ window.logout = function() {
   showToast("Вы вышли из аккаунта");
 };
 
+/* ================= ПРОФИЛЬ ================= */
+
+window.openProfileModal = function() {
+  const user = getUser();
+  if (!user) return;
+
+  document.getElementById("profileName").value = user.name || "";
+  document.getElementById("profileEmail").value = user.email || "";
+  document.getElementById("profilePassword").value = "";
+
+  document.getElementById("profileModal").classList.add("open");
+};
+
+window.submitProfile = function(e) {
+  e.preventDefault();
+
+  const newName = document.getElementById("profileName").value.trim();
+  const newEmail = document.getElementById("profileEmail").value.trim();
+
+  if (!newName || !newEmail) {
+    showToast("Имя и email не могут быть пустыми");
+    return;
+  }
+
+  const oldUser = getUser();
+
+  const updatedUser = {
+    name: newName,
+    email: newEmail
+  };
+
+  setUser(updatedUser);
+
+  if (oldUser && oldUser.email !== newEmail) {
+    const orders = getOrders();
+    let updatedCount = 0;
+    orders.forEach(order => {
+      if (order.userEmail === oldUser.email) {
+        order.userEmail = newEmail;
+        updatedCount++;
+      }
+    });
+    if (updatedCount > 0) {
+      setOrders(orders);
+    }
+  }
+
+  document.getElementById("userNameDisplay").textContent = "👤 " + newName;
+  closeModals();
+  showToast("Профиль успешно обновлен!");
+};
+
 /* ================= НАВИГАЦИЯ ================= */
 
 window.switchTab = function(tabName) {
@@ -204,7 +259,8 @@ window.switchTab = function(tabName) {
 /* ================= КАТАЛОГ ================= */
 
 async function initCatalog() {
-  allBooks = [...EXTRA_BOOKS];
+  const savedAdminBooks = JSON.parse(localStorage.getItem("elibrary_custom_books") || "[]");
+  allBooks = [...EXTRA_BOOKS, ...savedAdminBooks];
 
   if (USE_BACKEND) {
     try {
@@ -219,11 +275,16 @@ async function initCatalog() {
           type: "Книга",
           rating: 4.5
         }));
-        allBooks = [...apiBooks, ...EXTRA_BOOKS];
+        allBooks = [...apiBooks, ...allBooks];
       }
     } catch (e) {}
   }
 
+  updateGenres();
+  renderCatalog(allBooks);
+}
+
+function updateGenres() {
   const genres = new Set();
   allBooks.forEach(b => (b.dgarnu || []).forEach(g => genres.add(g)));
 
@@ -231,23 +292,33 @@ async function initCatalog() {
   if (genreSelect) {
     const current = genreSelect.value;
     genreSelect.innerHTML = '<option value="">Все жанры</option>' +
-      Array.from(genres).map(g => `<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join("");
+      Array.from(genres).sort().map(g => `<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join("");
     genreSelect.value = current;
   }
-
-  renderCatalog(allBooks);
 }
 
 window.filterBooks = function() {
   const query = document.getElementById("searchInput").value.toLowerCase();
   const genre = document.getElementById("genreFilter").value;
+  const type = document.getElementById("typeFilter").value;
+  const minRating = parseFloat(document.getElementById("ratingFilter").value) || 0;
+  const sortType = document.getElementById("priceSort").value;
 
-  const filtered = allBooks.filter(book => {
+  let filtered = allBooks.filter(book => {
     const matchesText = book.name.toLowerCase().includes(query) ||
       (book.aftors || []).join(" ").toLowerCase().includes(query);
     const matchesGenre = !genre || (book.dgarnu || []).includes(genre);
-    return matchesText && matchesGenre;
+    const matchesType = !type || book.type === type;
+    const matchesRating = (book.rating || 0) >= minRating;
+
+    return matchesText && matchesGenre && matchesType && matchesRating;
   });
+
+  if (sortType === "asc") {
+    filtered.sort((a, b) => a.price - b.price);
+  } else if (sortType === "desc") {
+    filtered.sort((a, b) => b.price - a.price);
+  }
 
   renderCatalog(filtered);
 };
@@ -261,24 +332,31 @@ function renderCatalog(books) {
     return;
   }
 
-  grid.innerHTML = books.map(book => `
+  grid.innerHTML = books.map(book => {
+    const coverStyle = `background: linear-gradient(135deg, ${book.color || '#2563eb'}, ${book.color || '#2563eb'}dd);`;
+
+    return `
     <div class="card">
       <div>
-        <div class="book-cover" style="background: ${book.color || '#2563eb'}; position: relative;">
-          📘
-          <span style="position:absolute; top:10px; right:10px; background:rgba(0,0,0,0.6); color:white; padding:2px 8px; border-radius:4px; font-size:12px;">${book.type || 'Книга'}</span>
+        <div class="book-cover" style="${coverStyle}; position: relative; padding: 15px; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center;">
+          <span style="position:absolute; top:10px; right:10px; background:rgba(0,0,0,0.6); color:white; padding:2px 8px; border-radius:4px; font-size:12px; backdrop-filter: blur(4px);">${book.type || 'Книга'}</span>
+          <span style="color: white; font-weight: 800; font-size: 1.1rem; line-height: 1.2; text-shadow: 0 2px 4px rgba(0,0,0,0.3);">${escapeHtml(book.name)}</span>
+          <span style="color: rgba(255,255,255,0.8); font-size: 0.8rem; margin-top: 5px;">${escapeHtml((book.aftors || [])[0] || "Автор")}</span>
         </div>
-        <h3>${escapeHtml(book.name)} <span style="color: #f59e0b; font-size: 14px;">★ ${book.rating || '4.5'}</span></h3>
+        <h3 style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;">
+          <span>${escapeHtml(book.name)}</span>
+          <span style="color: #f59e0b; font-size: 14px; white-space: nowrap;">★ ${book.rating || '4.5'}</span>
+        </h3>
         <div class="meta">${escapeHtml((book.aftors || []).join(", ") || "Автор не указан")} • ${escapeHtml(book.data)} г.</div>
         <div class="tags">${(book.dgarnu || []).map(g => `<span class="tag">${escapeHtml(g)}</span>`).join("")}</div>
         <p class="desc">${escapeHtml(book.description)}</p>
       </div>
       <div class="card-footer">
         <span class="price">${book.price} ₽</span>
-        <button type="button" class="btn-primary" onclick="openOrderModal(${book.id_books})">Заказать книгу</button>
+        <button type="button" class="btn-primary" onclick="openOrderModal(${book.id_books})">В корзину</button>
       </div>
     </div>
-  `).join("");
+  `}).join("");
 }
 
 /* ================= ЗАКАЗ ================= */
@@ -407,6 +485,123 @@ window.submitReturn = function(e) {
   updateMyBooksBadge();
   renderMyBooks();
   showToast("Заявка на возврат книги успешно оформлена!");
+};
+
+/* ================= АДМИН-ПАНЕЛЬ ================= */
+
+// Слушатель горячих клавиш (изменено на Ctrl + N)
+document.addEventListener("keydown", (e) => {
+  if (e.ctrlKey && e.key.toLowerCase() === 'b' || e.ctrlKey && e.key.toLowerCase() === 'и') {
+    e.preventDefault();
+    // Открываем окно входа в админку
+    const adminScreen = document.getElementById("adminScreen");
+    if (adminScreen.style.display === "none") {
+      document.getElementById("adminLoginModal").classList.add("open");
+    }
+  }
+});
+
+window.handleAdminLogin = function(e) {
+  e.preventDefault();
+  const login = document.getElementById("adminLogin").value.trim();
+  const password = document.getElementById("adminPassword").value;
+
+  if (login === ADMIN_LOGIN && password === ADMIN_PASSWORD) {
+    closeModals();
+    document.getElementById("authScreen").style.display = "none";
+    document.getElementById("appScreen").style.display = "none";
+    document.getElementById("adminScreen").style.display = "block";
+
+    renderAdminBooksList();
+    document.getElementById("adminLogin").value = "";
+    document.getElementById("adminPassword").value = "";
+    showToast("Добро пожаловать в админ-панель!");
+  } else {
+    showToast("Неверный логин или пароль!");
+  }
+};
+
+window.logoutAdmin = function() {
+  document.getElementById("adminScreen").style.display = "none";
+  checkAuth();
+  showToast("Вы вышли из админ-панели");
+};
+
+// Функция добавления новой книги
+window.addNewBook = function(e) {
+  e.preventDefault();
+
+  const newBook = {
+    id_books: Date.now(), // Уникальный ID на основе времени
+    name: document.getElementById("newBookName").value.trim(),
+    aftors: [document.getElementById("newBookAuthor").value.trim()],
+    dgarnu: document.getElementById("newBookGenres").value.split(",").map(g => g.trim()).filter(g => g),
+    data: document.getElementById("newBookYear").value,
+    price: Number(document.getElementById("newBookPrice").value),
+    color: "#" + Math.floor(Math.random()*16777215).toString(16).padStart(6, '0'), // Случайный цвет
+    type: document.getElementById("newBookType").value,
+    rating: Number(document.getElementById("newBookRating").value),
+    description: document.getElementById("newBookDesc").value.trim()
+  };
+
+  // Получаем текущие добавленные книги из localStorage
+  const customBooks = JSON.parse(localStorage.getItem("elibrary_custom_books") || "[]");
+  customBooks.push(newBook);
+  localStorage.setItem("elibrary_custom_books", JSON.stringify(customBooks));
+
+  // Обновляем текущий каталог
+  allBooks.push(newBook);
+
+  // Перерисовываем список в админке и в каталоге
+  renderAdminBooksList();
+  updateGenres();
+  filterBooks(); // Применяем текущие фильтры
+
+  // Очищаем форму
+  e.target.reset();
+  showToast("Книга успешно добавлена!");
+};
+
+// Отрисовка списка книг в админке с кнопками удаления
+function renderAdminBooksList() {
+  const list = document.getElementById("adminBooksList");
+  if (!list) return;
+
+  // Показываем только книги, которые добавили через админку
+  const customBooks = JSON.parse(localStorage.getItem("elibrary_custom_books") || "[]");
+
+  if (!customBooks.length) {
+    list.innerHTML = '<div style="color: var(--muted); text-align: center; padding: 1rem;">Вы еще не добавили ни одной книги.</div>';
+    return;
+  }
+
+  list.innerHTML = customBooks.map(book => `
+    <div class="admin-book-row">
+      <div class="admin-book-info">
+        <span class="admin-book-title">${escapeHtml(book.name)}</span>
+        <span class="admin-book-meta">${escapeHtml((book.aftors || []).join(", "))} • ${book.price} ₽ • ${book.type}</span>
+      </div>
+      <button type="button" class="btn-danger" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="deleteBook(${book.id_books})">Удалить</button>
+    </div>
+  `).join("");
+}
+
+window.deleteBook = function(bookId) {
+  if (!confirm("Вы уверены, что хотите удалить эту книгу?")) return;
+
+  // Удаляем из localStorage
+  let customBooks = JSON.parse(localStorage.getItem("elibrary_custom_books") || "[]");
+  customBooks = customBooks.filter(b => b.id_books !== bookId);
+  localStorage.setItem("elibrary_custom_books", JSON.stringify(customBooks));
+
+  // Удаляем из текущего массива
+  allBooks = allBooks.filter(b => b.id_books !== bookId);
+
+  // Перерисовываем
+  renderAdminBooksList();
+  updateGenres();
+  filterBooks();
+  showToast("Книга удалена!");
 };
 
 /* ================= ИНИЦИАЛИЗАЦИЯ ================= */
